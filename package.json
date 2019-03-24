@@ -1,0 +1,13 @@
+{
+    "name": "monky-bot",
+    "version": "1.0.0",
+    "description": "monky bot",
+    "main": "app.js",
+    "author": "PJ Kumlue",
+    "dependencies": {
+        "discord.io": "https://github.com/woor/discord.io/tarball/gateway_v6",
+        "winston": "^3.2.1",
+        "ytdl-core": "^0.20.1",
+        "youtube-node": "^1.3.0"
+    }
+}
