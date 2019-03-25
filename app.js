@@ -1,141 +1,146 @@
-const Discord = require("discord.io");
-const logger = require("winston");
+
+const Discord = require("discord.js");
+const ytdl = require("ytdl-core");
+const YouTube = require("youtube-node");
 const auth = require("./auth.json");
-const yt = require("ytdl-core");
-const Youtube = require("youtube-node");
-const fs = require("fs");
+const client = new Discord.Client;
 
-const youTube = new Youtube();
+const youTube = new YouTube();
 
-logger.remove(logger.transports.Console);
-logger.add(new logger.transports.Console, {
-    colorize: true
-});
+youTube.setKey(auth.yt_token);
 
-logger.level = "debug";
+let commands = ["play", "help", "queue", "skip", "pick"];
+let numberEmotes = [":one:", ":two:", ":three:", ":four:", ":five:"];
 
-let bot = new Discord.Client({
-    token: auth.token,
-    autorun: true
-});
-
-bot.on('ready', function (evt) {
-    logger.info('Connected');
-    logger.info('Logged in as: ');
-    logger.info(bot.username + ' - (' + bot.id + ')');
-
-    bot.setPresence({
+client.on("ready", () => {
+    console.log("Monky ready");
+    client.user.setPresence({
         game: {
-            name: "with my banan"
+            name: "with my banan",
         }
     });
 });
 
-commands = ["play", "help", "queue"]
+// if length is >= 1 then is playing
+let playlist = [];
+// current youtube search results
+let currentSearch = null;
 
-/* Each server gets its own queue */
-let songQueue = {};
 
-bot.on("message", function (user, userId, channelId, message, evt) {
-    if (message.substring(0, 1) == "!") {
-        let args = message.substring(1).split(" ");
-
-        if (args.length == 0) {
-            bot.sendMessage({
-                to: channelId,
-                message: "type !help to get help"
-            });
-
-            return;
-        }
-
-        switch (args[0]) {
+client.on("message", (message) => {
+    if (message.content.startsWith("!")) {
+        let args = message.content.substring(1).split(" ");
+        
+        switch (args[0].toLowerCase()) {
             case "play": {
-                if (args.length < 2) {
-                    bot.sendMessage({
-                       to: channelId,
-                       message: "monkey need url or search term"
-                    });
+                let voiceChannel = message.member.voiceChannel;
+                if (!voiceChannel) {
+                    message.reply("monky need voice channel");
+                } else if (args.length < 2) {
+                    message.reply("monky need url or search term");
+                } else {
+                    if (args[1].includes("https://www.youtube.com/watch")) {
+                        let url = args[1];
+
+                        voiceChannel.join().then(
+                            connection => {
+                                playlist.push(url);
+                                if (playlist.length == 1) {
+                                    playSongs(connection, voiceChannel);
+                                }
+                            }
+                        );
+                    } else {
+                        args.splice(0, 1);
+                        let query = args.join(" ");
+                        youTube.search(query, 5, (err, res) => {
+                            if (err) {
+                                return;
+                            }
+                            let numResults = res.items.length;
+                            let msg = "";
+                            for (let i = 0; i < numResults; i++) {
+                                msg += numberEmotes[i] + res.items[i].snippet.title + "\n\n";
+                            }
+                            msg += "!pick # to choose";
+                            message.channel.send(msg);
+                            currentSearch = res;
+                        });
+                    }
+                }
+                break;
+            }
+            case "pick": {
+                if (currentSearch == null || args.length > 2) {
                     return;
                 }
-    
-                args.splice(0, 1);
-                bot.sendMessage({
-                   to: channelId,
-                   message: "monky playing: " + args.join("\n")
-                });
-    
-                let serverId = bot.channels[channelId].guild_id;
-                let vcid = bot.servers[serverId].members[userId].voice_channel_id;
-
-                if (!songQueue.hasOwnProperty(serverId)) {
-                    songQueue[serverId] = [];
+                let value = parseInt(args[1]);
+                if (value == NaN) {
+                    message.reply("monky don't understand " + args[1]);
+                    return;
                 }
+                value--;
+                if (value >= currentSearch.items.length) {
+                    message.reply("monky not have that many banan");
+                }
+                let url = currentSearch.items[value].id.videoId;
+                message.channel.send("monky will play " + currentSearch.items[value].snippet.title);
 
-                let url = args[0].trim();
-                songQueue[serverId].push(url);
-    
-                bot.joinVoiceChannel(vcid, function(err, events) {
-                    if (err) {
-                        return;
-                    }
-    
-                    bot.getAudioContext(vcid, function(err, stream) {
-                        if (err) {
-                            bot.sendMessage({
-                                to: channelId,
-                                message: err
-                            });
-                            return;
+                let voiceChannel = message.member.voiceChannel;
+                
+
+                if (voiceChannel) {
+                    voiceChannel.join().then(
+                        connection => {
+                            playlist.push("https://www.youtube.com/watch?v=" + url);
+                            if (playlist.length == 1) {
+                                playSongs(connection, voiceChannel);
+                            }
                         }
-    
-                        yt(url).pipe(stream);
-                        stream.on("done", () => {
-                            bot.leaveVoiceChannel(vcid, function (err, res) {
-                            });
-                        });
-    
-                        // fs.createReadStream("Family Feud.mp3").pipe(stream,
-                        //     {end: false});
-                        // stream.on("done", function() {
-                        //     fs.createReadStream("Family Feud.mp3").pipe(stream, {end: false});
-                        // })
-                    });
-                });
+                    );
+                }
+                currentSearch = null;
+                break;
             }
-            break;
+            case "queue": {
+                if (playlist.length > 0) {
+                    let res = playlist.join("\n");
+                    message.channel.send(res);
+                } else {
+                    message.reply("monky have no song");
+                }
+                break;
+            }
             case "help": {
                 let res = "monky see and monky do:\n";
                 for (c in commands) {
                     res += "!" + commands[c] + "\n";
                 }
-                bot.sendMessage({
-                    to: channelId,
-                    message: res
-                });
-                break;
+                message.reply(res);
             }
-            case "queue": {
-                let serverId = bot.channels[channelId].guild_id;
-                if (songQueue.hasOwnProperty(serverId) && songQueue[serverId].length > 0) {
-                    bot.sendMessage({
-                        to: channelId,
-                        message: songQueue[serverId].join(",")
-                    });
-                } else {
-                    bot.sendMessage({
-                        to: channelId,
-                        message: "monky have no song"
-                    });
-                }
                 break;
-            }
             default:
-            bot.sendMessage({
-                to: channelId,
-                message: "monky don't understand '" + args[0] + "'"
-            });
-            break;
+                message.reply("monky don't understand '" + args[0] + "'");
+
         }
     }
 });
+
+function playSongs(connection, voiceChannel) {
+    if (playlist.length > 0) {
+        let songUrl = playlist[0];
+        const stream = ytdl(songUrl, {
+            filter: "audioonly"
+        });
+        let dispatcher = connection.playStream(stream);
+        dispatcher.on("end", (reason) => {
+            playlist.shift();
+            stream.destroy();
+            playSongs(connection, voiceChannel);
+        });
+    } else {
+        voiceChannel.leave();
+    }
+}
+
+client.login(auth.token);
