@@ -1,19 +1,30 @@
+const config = require("./config.json");
+
 const Discord = require("discord.js");
 const ytdl = require("ytdl-core");
 const YouTube = require("youtube-node");
-const config = require("./config.json");
+
 const fs = require("fs");
 const aws = require("aws-sdk");
-const StreamBuffers = require("stream-buffers");
 const util = require("util");
 
 const client = new Discord.Client();
+const youtube = new YouTube();
 
-const youTube = new YouTube();
-const ytSearch = util.promisify(youTube.search);
-youTube.setKey(config.youtube_token);
+const ytSearch = util.promisify(youtube.search);
+youtube.setKey(config.youtube_token);
 
-const commands = ["play", "search", "help", "queue", "skip", "pick", "stop"];
+const commands = [
+  "play",
+  "search",
+  "help",
+  "queue",
+  "skip",
+  "pick",
+  "stop",
+  "pause",
+  "resume",
+];
 const numberEmotes = [":one:", ":two:", ":three:", ":four:", ":five:"];
 
 const polly = new aws.Polly({
@@ -29,29 +40,34 @@ let transcribeService = new aws.TranscribeService({
 let playlist = [];
 // current youtube search results
 let currentSearch = null;
+let dispatcher = null;
+let pauseRequested = false;
 
 function playSongs(connection, voiceChannel) {
   if (playlist.length > 0) {
-    const songUrl = playlist[0];
+    const songUrl = playlist[0].url;
     const stream = ytdl(songUrl, {
       filter: "audioonly",
       quality: "highestaudio",
     });
-    let dispatcher = connection.play(stream);
+    dispatcher = connection.play(stream);
 
     dispatcher.on("speaking", (isSpeaking) => {
       if (!isSpeaking) {
-        playlist.shift();
-        stream.destroy();
-        playSongs(connection, voiceChannel);
+        if (!pauseRequested) {
+          playlist.shift();
+          stream.destroy();
+          dispatcher = null;
+          playSongs(connection, voiceChannel);
+        }
+
+        pauseRequested = false;
       }
     });
   } else {
     voiceChannel.leave();
   }
 }
-
-function doYtSearch(query) {}
 
 function ytDisplaySearchResults(results, userMessage) {
   let numResults = results.items.length;
@@ -73,7 +89,7 @@ function handleHelpRequest(userMessage, args) {
 
 function handleQueueRequest(userMessage, args) {
   if (playlist.length > 0) {
-    let res = playlist.join("\n");
+    let res = playlist.map((song) => song.url).join("\n");
     userMessage.channel.send(res);
   } else {
     userMessage.reply("monky have no song");
@@ -91,7 +107,9 @@ function handlePlayRequest(userMessage, args) {
   if (args[1].includes("https://www.youtube.com/watch")) {
     let url = args[1];
     voiceChannel.join().then((connection) => {
-      playlist.push(url);
+      let song = {};
+      song.url = url;
+      playlist.push(song);
       if (playlist.length == 1) {
         playSongs(connection, voiceChannel);
       }
@@ -143,8 +161,56 @@ function handlePickRequest(message, args) {
 }
 
 function handleStopRequest(userMessage, args) {
+  if (!ensureInVoiceChannel(userMessage)) {
+  }
   playlist = [];
   const voiceChannel = userMessage.member.voice.channel;
+}
+
+function handlePauseRequest(message, args) {
+  if (!ensureInVoiceChannel(message)) {
+    return;
+  }
+  if (dispatcher == null) {
+    return;
+  }
+  pauseRequested = true;
+  dispatcher.pause();
+}
+
+function handleResumeRequest(message, args) {
+  if (!ensureInVoiceChannel(message)) {
+    return;
+  }
+  if (dispatcher == null) {
+    return;
+  }
+
+  pauseRequested = false;
+  dispatcher.resume();
+}
+
+function handleSkipRequest(message, args) {
+  if (!ensureInVoiceChannel(message)) {
+    return;
+  }
+  if (dispatcher == null) {
+    return;
+  }
+
+  dispatcher.pause();
+}
+
+function handleStopRequest(message, args) {
+  if (!ensureInVoiceChannel(message)) {
+    return;
+  }
+  if (dispatcher == null) {
+    return;
+  }
+
+  playlist = [];
+  dispatcher.pause();
 }
 
 function setCallbacks() {
@@ -243,6 +309,18 @@ function routeCommand(message) {
     case "help":
       handleHelpRequest(message, args);
       break;
+    case "pause":
+      handlePauseRequest(message, args);
+      break;
+    case "resume":
+      handleResumeRequest(message, args);
+      break;
+    case "skip":
+      handleSkipRequest(message, args);
+      break;
+    case "stop":
+      handleStopRequest(message, args);
+      break;
     default:
       message.reply(`monky don't understand \`${command}\``);
   }
@@ -293,7 +371,9 @@ function pickSongFromSearch(songNumber, message) {
 
   if (voiceChannel) {
     voiceChannel.join().then((connection) => {
-      playlist.push(url);
+      let song = {};
+      song.url = url;
+      playlist.push(song);
       // If playlist is of size 1 then song was not previously playing.
       if (playlist.length == 1) {
         playSongs(connection, voiceChannel);
@@ -303,13 +383,14 @@ function pickSongFromSearch(songNumber, message) {
   currentSearch = null;
 }
 
-function playNextInQueue() {}
-
 setCallbacks();
 console.log("Client logging on");
-client
-  .login(config.discord_token)
-  .then(onLoggedIn)
-  .catch((reason) => {
+(async () => {
+  try {
+    await client.login(config.discord_token);
+  } catch (reason) {
     console.log(`Could not login: ${reason}`);
-  });
+    return;
+  }
+  onLoggedIn();
+})();
