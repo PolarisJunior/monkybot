@@ -1,6 +1,7 @@
 const config = require("./config.json");
-// const blackjack = require("./src/blackjack.js");
-const Blackjack = require("./src/blackjack.js");
+
+const Blackjack = require("./src/Blackjack.js");
+const Database = require("./src/Database.js");
 
 const Discord = require("discord.js");
 const ytdl = require("ytdl-core");
@@ -14,6 +15,9 @@ const client = new Discord.Client();
 const youtube = new YouTube();
 
 const blackjack = new Blackjack();
+
+const database = new Database();
+database.get("ff").then(console.log);
 
 const ytSearch = util.promisify(youtube.search);
 youtube.setKey(config.youtube_token);
@@ -244,22 +248,56 @@ function prettifyCardHand(hand) {
     h: "♥",
     s: "♠",
   };
-  return hand[0] + prettySuits[hand[1]];
+  return `${hand[0]} ${prettySuits[hand[1]]}`;
 }
 
-function showCards(player_id, discord_msg) {
-  let msg = "Your cards: ";
+/**
+ *
+ * @param {number} player_id
+ * @param {Discord.Message} discord_msg
+ */
+function showCards(
+  player_id,
+  discord_msg,
+  title_msg = "",
+  result = Blackjack.Result.SUCCESS
+) {
+  let msg = "Your cards: \n";
   for (const hand of blackjack.playerHand(player_id)) {
-    msg += `${prettifyCardHand(hand)}, `;
+    msg += `${prettifyCardHand(hand)} `;
   }
+  msg += `\n(${blackjack.playerHandValue(player_id)})`;
 
   msg += "\n";
-  msg += "Dealer cards: ";
-
+  msg += "Dealer cards: \n";
   for (const hand of blackjack.dealerHand(player_id)) {
-    msg += `${prettifyCardHand(hand)}, `;
+    msg += `${prettifyCardHand(hand)} `;
   }
-  discord_msg.reply(`${msg}`);
+  msg += `\n(${blackjack.dealerHandValue(player_id)})`;
+
+  const embed = new Discord.MessageEmbed();
+  embed.color = "#26a69a";
+  switch (result) {
+    case Blackjack.Result.LOSS:
+      embed.color = "#e53935";
+      break;
+    case Blackjack.Result.WIN:
+      embed.color = "#d4e157";
+      break;
+    case Blackjack.Result.TIE:
+      embed.color = "#e0f2f1";
+      break;
+  }
+  embed.title = `${discord_msg.author.username}'s game\n${title_msg}`;
+  embed.description = "```" + msg + "```";
+  embed.footer = {
+    text: `Money: $${blackjack.getMoney(player_id)}, Bet: $${blackjack.getBid(
+      player_id
+    )}\nType ${config.prefix}hit to hit or ${config.prefix}stay to stand`,
+    iconURL: discord_msg.author.avatarURL(),
+    proxyIconURL: discord_msg.author.avatarURL(),
+  };
+  discord_msg.channel.send("", { embed: embed });
 }
 
 function routeCommand(message) {
@@ -359,21 +397,28 @@ function routeCommand(message) {
       break;
     case "blackjack":
       {
-        const result = blackjack.placeBid(message.author.id, 1);
+        if (args.length == 1) {
+          message.reply("You need to make a bet");
+          break;
+        }
+        const bid = parseInt(args[1]);
+        if (bid == NaN) {
+          message.reply("That's not a number dumbass");
+          break;
+        }
+
+        const result = blackjack.placeBid(message.author.id, bid);
         if (result == Blackjack.Result.NOT_ENOUGH_MONEY) {
           message.reply("You don't have enough money dumbass");
         } else if (result == Blackjack.Result.ALREADY_IN_GAME) {
           message.reply("You are already in a game dumbass");
         } else {
           if (result == Blackjack.Result.WIN) {
-            message.reply("Blackjack!");
-            showCards(author_id, message);
+            showCards(author_id, message, "Blackjack!", result);
           } else if (result == Blackjack.Result.LOSS) {
-            message.reply("おまえはもうしんでいる");
-            showCards(author_id, message);
+            showCards(author_id, message, "おまえはもうしんでいる", result);
           } else {
-            message.reply("Type h to hit, or s to stand");
-            showCards(author_id, message);
+            showCards(author_id, message, "", result);
           }
         }
       }
@@ -384,9 +429,10 @@ function routeCommand(message) {
         if (result == Blackjack.Result.NOT_IN_GAME) {
           message.reply("You aren't in a game dumbass");
         } else {
-          showCards(author_id, message);
           if (result == Blackjack.Result.LOSS) {
-            message.reply("You fokin suck dik m8");
+            showCards(author_id, message, "You fokin suck dik m8", result);
+          } else {
+            showCards(author_id, message, "", result);
           }
         }
       }
@@ -400,16 +446,13 @@ function routeCommand(message) {
 
         switch (result) {
           case Blackjack.Result.LOSS:
-            showCards(author_id, message);
-            message.reply("You lose stinky");
+            showCards(author_id, message, "You lose stinky", result);
             break;
           case Blackjack.Result.WIN:
-            showCards(author_id, message);
-            message.reply("DUB");
+            showCards(author_id, message, "DUB", result);
             break;
           case Blackjack.Result.TIE:
-            showCards(author_id, message);
-            message.reply("yall see sumthin?");
+            showCards(author_id, message, "yall see sumthin?", result);
             break;
         }
       }
@@ -487,6 +530,3 @@ console.log("Client logging on");
   }
   onLoggedIn();
 })();
-
-const bj = new Blackjack();
-console.log(bj.getMoney(5));
