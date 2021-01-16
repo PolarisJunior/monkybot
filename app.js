@@ -1,4 +1,6 @@
 const config = require("./config.json");
+// const blackjack = require("./src/blackjack.js");
+const Blackjack = require("./src/blackjack.js");
 
 const Discord = require("discord.js");
 const ytdl = require("ytdl-core");
@@ -10,6 +12,8 @@ const util = require("util");
 
 const client = new Discord.Client();
 const youtube = new YouTube();
+
+const blackjack = new Blackjack();
 
 const ytSearch = util.promisify(youtube.search);
 youtube.setKey(config.youtube_token);
@@ -25,6 +29,7 @@ const commands = [
   "pause",
   "resume",
 ];
+
 const numberEmotes = [":one:", ":two:", ":three:", ":four:", ":five:"];
 
 const polly = new aws.Polly({
@@ -232,9 +237,35 @@ function onChatMessaged(message) {
   }
 }
 
+function prettifyCardHand(hand) {
+  const prettySuits = {
+    d: "♦",
+    c: "♣",
+    h: "♥",
+    s: "♠",
+  };
+  return hand[0] + prettySuits[hand[1]];
+}
+
+function showCards(player_id, discord_msg) {
+  let msg = "Your cards: ";
+  for (const hand of blackjack.playerHand(player_id)) {
+    msg += `${prettifyCardHand(hand)}, `;
+  }
+
+  msg += "\n";
+  msg += "Dealer cards: ";
+
+  for (const hand of blackjack.dealerHand(player_id)) {
+    msg += `${prettifyCardHand(hand)}, `;
+  }
+  discord_msg.reply(`${msg}`);
+}
+
 function routeCommand(message) {
   const args = parseMessageArgs(message);
   const command = args[0].toLowerCase();
+  const author_id = message.author.id;
   switch (command) {
     case "join":
       {
@@ -257,19 +288,21 @@ function routeCommand(message) {
                 console.log(err.code);
               } else if (data) {
                 if (data.AudioStream instanceof Buffer) {
-                  fs.writeFile("./speech.mp3", data.AudioStream, function (
-                    err
-                  ) {
-                    if (err) {
-                      return console.log(err);
+                  fs.writeFile(
+                    "./speech.mp3",
+                    data.AudioStream,
+                    function (err) {
+                      if (err) {
+                        return console.log(err);
+                      }
+                      console.log("The file was saved!");
+                      let dispatcher = connection.playFile("./speech.mp3");
+                      dispatcher.on("end", (reason) => {
+                        // console.log(reason);
+                        voiceChannel.leave();
+                      });
                     }
-                    console.log("The file was saved!");
-                    let dispatcher = connection.playFile("./speech.mp3");
-                    dispatcher.on("end", (reason) => {
-                      // console.log(reason);
-                      voiceChannel.leave();
-                    });
-                  });
+                  );
                 }
               }
             });
@@ -320,6 +353,66 @@ function routeCommand(message) {
       break;
     case "stop":
       handleStopRequest(message, args);
+      break;
+    case "money":
+      message.reply(blackjack.getMoney(message.author.id));
+      break;
+    case "blackjack":
+      {
+        const result = blackjack.placeBid(message.author.id, 1);
+        if (result == Blackjack.Result.NOT_ENOUGH_MONEY) {
+          message.reply("You don't have enough money dumbass");
+        } else if (result == Blackjack.Result.ALREADY_IN_GAME) {
+          message.reply("You are already in a game dumbass");
+        } else {
+          if (result == Blackjack.Result.WIN) {
+            message.reply("Blackjack!");
+            showCards(author_id, message);
+          } else if (result == Blackjack.Result.LOSS) {
+            message.reply("おまえはもうしんでいる");
+            showCards(author_id, message);
+          } else {
+            message.reply("Type h to hit, or s to stand");
+            showCards(author_id, message);
+          }
+        }
+      }
+      break;
+    case "hit":
+      {
+        const result = blackjack.hit(message.author.id);
+        if (result == Blackjack.Result.NOT_IN_GAME) {
+          message.reply("You aren't in a game dumbass");
+        } else {
+          showCards(author_id, message);
+          if (result == Blackjack.Result.LOSS) {
+            message.reply("You fokin suck dik m8");
+          }
+        }
+      }
+      break;
+    case "stay":
+      {
+        const result = blackjack.stay(message.author.id);
+        if (result == Blackjack.Result.NOT_IN_GAME) {
+          message.reply("You aren't in a game dumbass");
+        }
+
+        switch (result) {
+          case Blackjack.Result.LOSS:
+            showCards(author_id, message);
+            message.reply("You lose stinky");
+            break;
+          case Blackjack.Result.WIN:
+            showCards(author_id, message);
+            message.reply("DUB");
+            break;
+          case Blackjack.Result.TIE:
+            showCards(author_id, message);
+            message.reply("yall see sumthin?");
+            break;
+        }
+      }
       break;
     default:
       message.reply(`monky don't understand \`${command}\``);
@@ -394,3 +487,6 @@ console.log("Client logging on");
   }
   onLoggedIn();
 })();
+
+const bj = new Blackjack();
+console.log(bj.getMoney(5));
