@@ -6,7 +6,7 @@
     "author": "PJ Kumlue",
     "dependencies": {
         "@discordjs/opus": "0.2.1",
-        "aws-sdk": "^2.828.0",
+        "aws-sdk": "^2.814.0",
         "discord.js": "12.5.0",
         "node-uuid": ">= 1.4.1",
         "redis": "^3.0.2",
